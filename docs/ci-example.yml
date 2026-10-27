@@ -1,0 +1,37 @@
+name: Build and Verify
+
+on:
+  push:
+    branches: [main]
+    tags: ['*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npm test
+      - run: node scripts/verify-table-id.js
+      - run: npm run package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: table-column-resizer-performance
+          path: dist/*
+
+# Releases are published from a verified commit using the documented local
+# release procedure. Pushing a tag does not create an unreviewed upstream-style release.

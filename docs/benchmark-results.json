@@ -1,0 +1,92 @@
+{
+  "date": "2026-10-27T08:05:22.354Z",
+  "browser": "156.0.4314.42",
+  "upstreamCommit": "bb989d5d33bcc532981f4feaad43659bdefd995a",
+  "methodology": "Synthetic pointer-event bursts: 8 events per animation frame, 60 frames, 3 columns of wrapping text. One warm setup, one run per case. updateMs measures JS inside setColumnWidth only; layoutFlushMs measures explicit post-frame geometry reads and is not total rendering time. layoutDurationMs/styleDurationMs are CDP Performance counter deltas over the drag, including release. elapsedMs includes frame waiting. MutationObserver instrumentation affects timings. This is a Chromium fixture, not an Obsidian FPS measurement.",
+  "samples": [
+    {
+      "rows": 50,
+      "variant": "upstream-1.1.0",
+      "frames": 60,
+      "events": 480,
+      "calls": 480,
+      "cellMutations": 73440,
+      "styleMutations": 73440,
+      "elapsedMs": 1018.7,
+      "updateMs": 259.2,
+      "layoutFlushMs": 5.3,
+      "layoutDurationMs": 127.05,
+      "styleDurationMs": 30.19
+    },
+    {
+      "rows": 50,
+      "variant": "performance-1.2.0",
+      "frames": 60,
+      "events": 480,
+      "calls": 60,
+      "cellMutations": 0,
+      "styleMutations": 120,
+      "elapsedMs": 985.7,
+      "updateMs": 8,
+      "layoutFlushMs": 150.2,
+      "layoutDurationMs": 130.14,
+      "styleDurationMs": 18.54
+    },
+    {
+      "rows": 300,
+      "variant": "upstream-1.1.0",
+      "frames": 60,
+      "events": 480,
+      "calls": 480,
+      "cellMutations": 433440,
+      "styleMutations": 433440,
+      "elapsedMs": 3019.6,
+      "updateMs": 1225.1,
+      "layoutFlushMs": 18.7,
+      "layoutDurationMs": 574.97,
+      "styleDurationMs": 122.05
+    },
+    {
+      "rows": 300,
+      "variant": "performance-1.2.0",
+      "frames": 60,
+      "events": 480,
+      "calls": 60,
+      "cellMutations": 0,
+      "styleMutations": 120,
+      "elapsedMs": 1206.2,
+      "updateMs": 4,
+      "layoutFlushMs": 537.1,
+      "layoutDurationMs": 523.6,
+      "styleDurationMs": 17.45
+    },
+    {
+      "rows": 1000,
+      "variant": "upstream-1.1.0",
+      "frames": 60,
+      "events": 480,
+      "calls": 480,
+      "cellMutations": 1441440,
+      "styleMutations": 1441440,
+      "elapsedMs": 4860.8,
+      "updateMs": 2088.8,
+      "layoutFlushMs": 24.3,
+      "layoutDurationMs": 938.41,
+      "styleDurationMs": 176.31
+    },
+    {
+      "rows": 1000,
+      "variant": "performance-1.2.0",
+      "frames": 60,
+      "events": 480,
+      "calls": 60,
+      "cellMutations": 0,
+      "styleMutations": 120,
+      "elapsedMs": 2045.9,
+      "updateMs": 3.1,
+      "layoutFlushMs": 1040,
+      "layoutDurationMs": 1030.24,
+      "styleDurationMs": 19.29
+    }
+  ]
+}

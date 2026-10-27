@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.2.0] - 2026-10-27 — independent performance fork
+
+Maintained by WNGjeanm, based on bubble-wu's 1.1.0. Original MIT copyright and
+license are retained unchanged; this is not an official upstream release.
+
+### Changed
+- Coalesce pointer moves into one width update per animation frame.
+- Use column-level layout and an explicit table width instead of per-row width/min/max writes.
+- Keep adjacent columns stable, skip unchanged widths and flush the release coordinate.
+- Defer saved-width measurement until detached/hidden Markdown sections become visible.
+- Retain the upstream plugin ID, table IDs and configuration format for upgrades.
+
+### Fixed
+- Clean up cancelled drags, lost capture, blur, disable and unload.
+- Use the table's document and window for pointer events and animation frames.
+- Ignore unrelated pointers during an active drag.
+
+### Validation
+- Browser regression suite, reproducible drag benchmark, table-ID compatibility checks.
+- Installable ZIP includes original MIT license and explicit fork attribution.
+- Live Preview, real touch-device testing and real Obsidian/theme compatibility remain outside the verified scope.
+
 ## [1.1.0] - 2026-10-05
 
 ### Added

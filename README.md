@@ -1,81 +1,104 @@
-# Table Column Resizer for Obsidian
+# Table Column Resizer — Performance Fork
 
-An Obsidian plugin that lets you resize Markdown table columns by dragging their edges — no code blocks, no migration. Your notes stay plain Markdown.
+[中文](#中文说明) · [English](#english)
 
-![Drag to resize table columns in reading view](screenshots/demo.gif)
+**Independent performance fork maintained by [WNGjeanm](https://github.com/WNGjeanm).**
+Based on [Table Column Resizer by bubble](https://github.com/bubble-wu/obsidian-table-column-resizer).
+Original copyright: **Copyright (c) 2024 SOLO Builder**. MIT license and Git history retained.
+See [LICENSE](LICENSE) and [attribution](THIRD_PARTY_NOTICES.md).
 
-**Author**: [bubble](https://github.com/bubble-wu)
+## 中文说明
 
-## Why this plugin
+在 Obsidian 阅读视图中拖动标准 Markdown 表格的表头边缘，调整列宽；列宽保存在插件
+配置中，笔记仍然是普通 Markdown。
 
-Your notes stay **standard Markdown pipe tables**. Nothing is embedded in your notes — no `table` code blocks, no hidden markup in the file, no lock-in. Disable the plugin any time and your tables are still perfectly valid Markdown, everywhere.
+这是独立维护的性能分支，并非原作者发布的版本，也未作为新插件提交到社区目录。
 
-| | Table Column Resizer | Better Tables | Advanced Tables |
-|---|---|---|---|
-| Works on standard Markdown tables | ✅ | ❌ requires a `table` code block | ✅ |
-| Drag to resize columns | ✅ | ✅ | ❌ |
-| Widths persist across restarts | ✅ | ✅ | — |
-| Notes stay portable plain Markdown | ✅ | widths stored in a hidden comment inside a code block | ✅ |
+### 性能改动
 
-[Advanced Tables](https://github.com/tgrosinger/advanced-tables-obsidian) is a great complement: it focuses on table editing and navigation, while this plugin handles visual column widths.
+- 每个动画帧只应用最新鼠标位置，合并高频 Pointer Events。
+- 通过 `<colgroup>` 调整列宽，每次更新只写入列和表格两个元素，避免逐行修改整列。
+- 初始化时一次性读取几何尺寸，再明确设置固定布局和表格总宽度。
+- 到达宽度上限或宽度未变时，不再重复写样式。
+- 松手时立即应用最后位置；取消、失焦、丢失捕获、禁用时清理拖动状态。
+- 使用表格所属窗口的事件与动画帧，兼容独立窗口的文档上下文。
+- 保留上游表格 ID 算法及配置格式，兼容已有的 `data.json`。
 
-## Features
+拖动一列时表格总宽度随之变化，其他列保持原宽度。首次初始化仍需读取表头并清理
+旧版单元格约束；浏览器依然需要重新布局和绘制表格，超长表格的开销不会消失。
 
-- **Drag to resize**: grab a column edge in the header row and drag
-- **Mouse & touch**: pointer-event based, works with mouse, touch and stylus
-- **Persistent**: widths are saved per table and restored across restarts
-- **Reading view**: works in reading view (Live Preview support is planned)
-- **Customizable limits**: set any minimum and maximum column width
-- **Theme friendly**: styles are scoped to the resize handle and don't fight your theme
+测试条件、原始数据和验证边界见 [性能报告](docs/PERFORMANCE.md)。
 
-## Installation
+### 安装与升级
 
-Install from the official directory (recommended, gets automatic updates): open <https://obsidian.md/plugins?id=table-column-resizer> and click **Open in Obsidian**, or in Obsidian go to Settings → Community plugins → Browse and search for "Table Column Resizer".
+1. 从[本 Fork 的 Releases](https://github.com/WNGjeanm/obsidian-table-column-resizer/releases/latest)
+   下载 `table-column-resizer-performance-1.2.0.zip`。
+2. 在 Obsidian 中关闭原插件，备份原来的 `.obsidian/plugins/table-column-resizer/` 文件夹。
+3. 解压后，将 `table-column-resizer` 文件夹中的文件复制到同名插件目录。保留已有
+   `data.json`，无需修改笔记。
+4. 重新启用插件，在阅读视图拖动表头右边缘。最后一列沿用上游行为，不设置拖动手柄。
 
-Or manually:
+本分支保留 `table-column-resizer` 插件 ID 以兼容已有配置，因此与上游版本使用同一个
+插件目录，不能同时启用。后续请从本 Fork 更新；社区目录的更新来自原项目，可能覆盖
+本分支。回退时关闭插件并恢复备份即可。
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/bubble-wu/obsidian-table-column-resizer/releases)
-2. Copy them into your vault: `.obsidian/plugins/table-column-resizer/`
-3. Enable the plugin in Settings → Community plugins
+设置沿用上游：启用开关、最小列宽（默认 50px）、最大列宽（默认 500px）。
+达到上限后列宽会停止增加，可按需要调大设置。
 
-### Development
+### 范围与限制
 
-```bash
-git clone https://github.com/bubble-wu/obsidian-table-column-resizer.git
-cd obsidian-table-column-resizer
-npm install
-npm run build   # outputs main.js
+- 支持阅读视图中的普通 Markdown 表格；不包含实时预览编辑模式。
+- 支持鼠标；保留触摸和笔事件代码，尚未在真实触摸设备上验证。
+- 不处理含合并单元格或自定义 `<colgroup>` 的 HTML 表格。
+- 同一笔记中内容完全相同的表格仍共享列宽；修改表格文字后使用新的表格 ID。
+- 自动化测试在 Chromium 浏览器的 Obsidian API 桩环境中运行，不能代替真实
+  Obsidian、不同主题和其他插件的兼容性测试。
+
+## English
+
+This independent MIT-licensed fork improves the continuous-drag path of bubble's
+Table Column Resizer 1.1.0. It coalesces pointer moves with `requestAnimationFrame`,
+replaces per-row cell writes with column-level layout, and flushes the last
+position on release. Resizing changes the table's total width and keeps the other
+columns stable. Existing table IDs and persisted widths remain compatible.
+
+Download the ZIP from **this fork's Releases**, disable the existing plugin, back
+up its folder, and replace the files in `.obsidian/plugins/table-column-resizer/`.
+Keep your `data.json`. Enable the plugin and drag a header edge in reading view.
+The retained plugin ID means upstream and fork cannot run side by side. Update
+from this fork; upstream community-directory updates may replace it.
+
+The upstream author, original copyright notice, full MIT license, history and
+demonstration asset remain credited. This is not an upstream-endorsed release.
+See [attribution](THIRD_PARTY_NOTICES.md) and [performance evidence](docs/PERFORMANCE.md).
+
+### Development / 开发
+
+Use Node.js 22 or later. Clone this repository with its history (the benchmark and
+license checks use the upstream fork commit).
+
+```sh
+npm ci
+npx playwright install chromium
+npm run build
+npm test
+node scripts/verify-table-id.js
+npm run benchmark
+npm run package
 ```
 
-## Usage
+On Windows the test harness can use installed Microsoft Edge. Set
+`TCR_BROWSER_PATH` to select another Chromium executable. The installable package
+has no bundled third-party runtime dependencies; `obsidian` is provided by the host.
 
-1. Add a Markdown table to a note:
-   ```markdown
-   | Name | Age | City | Description |
-   |------|-----|------|-------------|
-   | John | 25  | NYC  | Software developer |
-   | Jane | 30  | LA   | Product manager |
-   ```
-2. Switch to reading view (`Cmd/Ctrl + E`)
-3. Hover a header cell — a vertical handle appears on its right edge. Drag it to resize the column.
-4. Widths are saved when you release the mouse, and restored the next time the table is rendered.
+The inherited automatic-release workflow is disabled on this fork. A proposed
+Node 22 test workflow is available at [docs/ci-example.yml](docs/ci-example.yml);
+installing it requires a GitHub credential with `workflow` scope. See the
+[validation record](docs/VALIDATION.md) for the checks actually run.
 
-## Settings
+### Original upstream demonstration / 上游原始演示
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Enable column resizing | on | Toggle resizing without disabling the plugin |
-| Minimum column width | 50px | Smallest allowed column width |
-| Maximum column width | 500px | Largest allowed column width |
+This unchanged animation illustrates upstream usage; it is not a recording of
+the performance fork or benchmark.
 
-Widths are keyed by note path + table content: they survive restarts and edits elsewhere in the note, and reset if the table's content changes.
-
-## Known limitations
-
-- Reading view only — Live Preview is not supported yet (planned)
-- Mouse-driven; touch dragging is not supported
-- Two byte-identical tables in the same note share their saved widths
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+![Original demonstration by the upstream project](screenshots/demo.gif)

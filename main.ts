@@ -1,4 +1,5 @@
-import { Plugin, MarkdownPostProcessorContext, PluginSettingTab, Setting, SettingDefinitionItem } from 'obsidian';
+import { Plugin, MarkdownPostProcessorContext, MarkdownRenderChild, PluginSettingTab, Setting, SettingDefinitionItem } from 'obsidian';
+import { ColumnLayout, prepareColumnLayout, updateColumnWidth } from './column-layout';
 
 interface PluginSettings {
 	enabled: boolean;
@@ -14,20 +15,6 @@ const DEFAULT_SETTINGS: PluginSettings = {
 
 /** Upper bound on remembered tables per file; keeps data.json from growing without limit. */
 const MAX_TABLE_ENTRIES_PER_FILE = 100;
-
-type CssStyles = Parameters<HTMLElement['setCssStyles']>[0];
-
-/**
- * Prefer Obsidian's setCssStyles helper, fall back to direct style assignment
- * on app versions that predate it, so minAppVersion 0.15.0 stays truthful.
- */
-function setElementCss(el: HTMLElement, styles: CssStyles): void {
-	if (typeof el.setCssStyles === 'function') {
-		el.setCssStyles(styles);
-	} else {
-		Object.assign(el.style, styles);
-	}
-}
 
 /** Saved column widths, keyed by a stable per-table id. */
 interface SavedTableWidths {
@@ -49,6 +36,16 @@ export default class TableColumnResizerPlugin extends Plugin {
 	private currentColumn = -1;
 	private startX = 0;
 	private startWidth = 0;
+	private layouts = new WeakMap<HTMLTableElement, ColumnLayout>();
+	private dragDocument: Document | null = null;
+	private dragWindow: Window | null = null;
+	private dragHandle: Element | null = null;
+	private pointerId = -1;
+	private frame: number | null = null;
+	private pendingWidth: number | null = null;
+	private changed = false;
+	private documents = new Set<Document>();
+	private pendingRestores = new Map<HTMLTableElement, ResizeObserver>();
 
 	async onload() {
 		const raw: unknown = await this.loadData();
@@ -67,18 +64,32 @@ export default class TableColumnResizerPlugin extends Plugin {
 	onunload() {
 		// Clean up drag state in case the plugin is disabled mid-drag.
 		this.endResize();
+		this.removeAllHandles();
+		this.documents.clear();
+		this.clearPendingRestores();
 	}
 
 	processTables(element: HTMLElement, context: MarkdownPostProcessorContext) {
 		if (!this.settings.enabled) return;
 		element.querySelectorAll<HTMLTableElement>('table').forEach((table) => {
+			if (table.hasAttribute('data-resizable')) return;
 			this.makeTableResizable(table, context.sourcePath);
+			const child = new MarkdownRenderChild(table);
+			child.onunload = () => {
+				this.pendingRestores.get(table)?.disconnect();
+				this.pendingRestores.delete(table);
+				if (this.currentTable === table) this.endResize();
+			};
+			context.addChild(child);
 		});
 	}
 
 	makeTableResizable(table: HTMLTableElement, sourcePath: string) {
 		if (table.hasAttribute('data-resizable')) return;
+		// HTML tables with authored column groups/spans need a different column model.
+		if (table.querySelector('colgroup:not([data-tcr-columns]), [colspan], [rowspan]')) return;
 		table.setAttribute('data-resizable', 'true');
+		this.documents.add(table.ownerDocument);
 
 		this.applySavedWidths(table, sourcePath);
 
@@ -100,8 +111,23 @@ export default class TableColumnResizerPlugin extends Plugin {
 	applySavedWidths(table: HTMLTableElement, sourcePath: string) {
 		const widths = this.tableWidths[this.getTableId(table, sourcePath)];
 		if (!widths) return;
+		// Markdown post-processors can receive detached/hidden sections. Measuring
+		// them now would freeze untouched columns at zero; wait for real geometry.
+		if (!table.isConnected || table.getBoundingClientRect().width <= 0) {
+			if (!this.pendingRestores.has(table)) {
+				const observer = new ResizeObserver(() => {
+					if (this.settings.enabled && table.isConnected && table.getBoundingClientRect().width > 0) {
+						this.applySavedWidths(table, sourcePath);
+					}
+				});
+				this.pendingRestores.set(table, observer);
+				observer.observe(table);
+			}
+			return;
+		}
+		this.pendingRestores.get(table)?.disconnect();
+		this.pendingRestores.delete(table);
 
-		setElementCss(table, { tableLayout: 'fixed' });
 		const entries = Object.entries(widths) as [string, number][];
 		entries.forEach(([columnIndex, width]) => {
 			this.setColumnWidth(table, Number.parseInt(columnIndex, 10), width);
@@ -111,64 +137,116 @@ export default class TableColumnResizerPlugin extends Plugin {
 	private onHandlePointerDown(e: PointerEvent, table: HTMLTableElement, columnIndex: number, sourcePath: string) {
 		if (this.isResizing || e.button !== 0) return;
 		e.preventDefault();
+		if (this.pendingRestores.has(table)) this.applySavedWidths(table, sourcePath);
 
 		this.isResizing = true;
 		this.currentTable = table;
 		this.currentSourcePath = sourcePath;
 		this.currentColumn = columnIndex;
 		this.startX = e.clientX;
+		this.pointerId = e.pointerId;
+		this.dragDocument = table.ownerDocument;
+		this.dragWindow = table.ownerDocument.defaultView;
+		this.dragHandle = e.currentTarget as Element;
+		this.pendingWidth = null;
+		this.changed = false;
 
 		const headerCell = table.rows[0]?.cells[columnIndex];
 		this.startWidth = headerCell ? headerCell.getBoundingClientRect().width : this.settings.minColumnWidth;
 
 		// Fixed layout makes the browser respect the exact widths we set.
-		setElementCss(table, { tableLayout: 'fixed' });
+		if (!this.layouts.has(table)) this.layouts.set(table, prepareColumnLayout(table));
 		table.setAttribute('data-resizing', 'true');
-		document.body.classList.add('table-resizing');
+		this.dragDocument.body.classList.add('table-resizing');
 
 		// Capture so the drag keeps tracking when the pointer leaves the window,
 		// and works identically for mouse, touch and stylus.
-		if (e.target instanceof Element) {
+		if (this.dragHandle) {
 			try {
-				e.target.setPointerCapture(e.pointerId);
+				this.dragHandle.setPointerCapture(e.pointerId);
 			} catch {
 				// Best-effort; the document listeners below still work.
 			}
 		}
 
-		document.addEventListener('pointermove', this.handlePointerMove);
-		document.addEventListener('pointerup', this.handlePointerUp);
-		document.addEventListener('pointercancel', this.handlePointerUp);
+		this.dragDocument.addEventListener('pointermove', this.handlePointerMove);
+		this.dragDocument.addEventListener('pointerup', this.handlePointerUp);
+		this.dragDocument.addEventListener('pointercancel', this.handlePointerCancel);
+		this.dragHandle?.addEventListener('lostpointercapture', this.handleCaptureLost);
+		this.dragWindow?.addEventListener('blur', this.handleCaptureLost);
 	}
 
 	handlePointerMove = (e: PointerEvent) => {
-		if (!this.isResizing || !this.currentTable) return;
+		if (!this.isResizing || !this.currentTable || e.pointerId !== this.pointerId) return;
 
 		const deltaX = e.clientX - this.startX;
 		const newWidth = Math.max(
 			this.settings.minColumnWidth,
-			Math.min(this.startWidth + deltaX, this.settings.maxColumnWidth)
+			Math.min(Math.round(this.startWidth + deltaX), this.settings.maxColumnWidth)
 		);
 
-		this.setColumnWidth(this.currentTable, this.currentColumn, newWidth);
-	};
-
-	handlePointerUp = () => {
-		if (!this.isResizing) return;
-		const table = this.currentTable;
-		const sourcePath = this.currentSourcePath;
-		this.endResize();
-		if (table) {
-			void this.saveWidths(table, sourcePath);
+		this.pendingWidth = newWidth;
+		if (this.frame === null && this.dragWindow) {
+			this.frame = this.dragWindow.requestAnimationFrame(() => {
+				this.frame = null;
+				this.flushWidth();
+			});
 		}
 	};
 
+	private flushWidth() {
+		if (!this.currentTable || this.pendingWidth === null) return;
+		if (this.currentTable.isConnected) {
+			const before = this.layouts.get(this.currentTable)?.widths[this.currentColumn];
+			this.setColumnWidth(this.currentTable, this.currentColumn, this.pendingWidth);
+			this.changed = this.changed || before !== this.pendingWidth;
+		}
+		this.pendingWidth = null;
+	}
+
+	handlePointerUp = (e: PointerEvent) => {
+		if (!this.isResizing || e.pointerId !== this.pointerId) return;
+		// Apply the release coordinate even when it precedes the scheduled frame.
+		if (e.clientX !== this.startX || this.pendingWidth !== null || this.changed) this.handlePointerMove(e);
+		this.finishResize();
+	};
+
+	private handlePointerCancel = (e: PointerEvent) => {
+		if (e.pointerId === this.pointerId) this.finishResize();
+	};
+
+	private handleCaptureLost = () => this.finishResize();
+
+	private finishResize() {
+		if (!this.isResizing) return;
+		this.flushWidth();
+		const table = this.currentTable;
+		const sourcePath = this.currentSourcePath;
+		const changed = this.changed;
+		this.endResize();
+		if (table?.isConnected && changed) {
+			void this.saveWidths(table, sourcePath);
+		}
+	}
+
 	private endResize() {
 		this.isResizing = false;
-		document.removeEventListener('pointermove', this.handlePointerMove);
-		document.removeEventListener('pointerup', this.handlePointerUp);
-		document.removeEventListener('pointercancel', this.handlePointerUp);
-		document.body.classList.remove('table-resizing');
+		if (this.frame !== null) this.dragWindow?.cancelAnimationFrame(this.frame);
+		this.frame = null;
+		this.pendingWidth = null;
+		this.dragDocument?.removeEventListener('pointermove', this.handlePointerMove);
+		this.dragDocument?.removeEventListener('pointerup', this.handlePointerUp);
+		this.dragDocument?.removeEventListener('pointercancel', this.handlePointerCancel);
+		this.dragDocument?.body.classList.remove('table-resizing');
+		this.dragWindow?.removeEventListener('blur', this.handleCaptureLost);
+		this.dragHandle?.removeEventListener('lostpointercapture', this.handleCaptureLost);
+		try {
+			if (this.dragHandle?.hasPointerCapture(this.pointerId)) this.dragHandle.releasePointerCapture(this.pointerId);
+		} catch { /* The host may already have removed the handle. */ }
+		this.dragDocument = null;
+		this.dragWindow = null;
+		this.dragHandle = null;
+		this.pointerId = -1;
 
 		if (this.currentTable) {
 			this.currentTable.removeAttribute('data-resizing');
@@ -179,15 +257,12 @@ export default class TableColumnResizerPlugin extends Plugin {
 	}
 
 	setColumnWidth(table: HTMLTableElement, columnIndex: number, width: number) {
-		const px = `${width}px`;
-		// row.cells is indexed by table column slot, so rows with a
-		// different number of cells (or spans) stay aligned correctly.
-		Array.from(table.rows).forEach((row) => {
-			const cell = row.cells[columnIndex];
-			if (cell) {
-				setElementCss(cell, { width: px, minWidth: px, maxWidth: px });
-			}
-		});
+		let layout = this.layouts.get(table);
+		if (!layout) {
+			layout = prepareColumnLayout(table);
+			this.layouts.set(table, layout);
+		}
+		updateColumnWidth(table, layout, columnIndex, width);
 	}
 
 	async saveWidths(table: HTMLTableElement, sourcePath: string) {
@@ -196,11 +271,7 @@ export default class TableColumnResizerPlugin extends Plugin {
 		if (!headerRow) return;
 
 		const widths: { [columnIndex: number]: number } = {};
-		Array.from(headerRow.cells).forEach((cell) => {
-			if (cell.style.width) {
-				widths[cell.cellIndex] = Number.parseFloat(cell.style.width);
-			}
-		});
+		this.layouts.get(table)?.widths.forEach((width, index) => { widths[index] = width; });
 
 		if (Object.keys(widths).length === 0) {
 			delete this.tableWidths[tableId];
@@ -266,17 +337,28 @@ export default class TableColumnResizerPlugin extends Plugin {
 
 	async setEnabled(value: boolean) {
 		this.settings.enabled = value;
-		if (!value) this.removeAllHandles();
+		if (!value) {
+			this.finishResize();
+			this.removeAllHandles();
+			this.clearPendingRestores();
+		}
 		await this.saveSettings();
+	}
+
+	private clearPendingRestores() {
+		this.pendingRestores.forEach(observer => observer.disconnect());
+		this.pendingRestores.clear();
 	}
 
 	/** Make disabling take effect immediately instead of waiting for the next render. */
 	private removeAllHandles() {
-		document.querySelectorAll('table[data-resizable]').forEach((table) => {
-			table.removeAttribute('data-resizable');
-		});
-		document.querySelectorAll('.table-column-resizer').forEach((handle) => {
-			handle.remove();
+		this.documents.forEach(doc => {
+			doc.querySelectorAll('table[data-resizable]').forEach((table) => {
+				table.removeAttribute('data-resizable');
+			});
+			doc.querySelectorAll('.table-column-resizer').forEach((handle) => {
+				handle.remove();
+			});
 		});
 	}
 }
