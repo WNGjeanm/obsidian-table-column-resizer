@@ -17,22 +17,27 @@ See [LICENSE](LICENSE) and [attribution](THIRD_PARTY_NOTICES.md).
 ### 性能改动
 
 - 每个动画帧只应用最新鼠标位置，合并高频 Pointer Events。
-- 通过 `<colgroup>` 调整列宽，每次更新只写入列和表格两个元素，避免逐行修改整列。
+- 通过 `<colgroup>` 调整列宽，每次更新只改相邻两列，避免逐行修改整列。
 - 初始化时一次性读取几何尺寸，再明确设置固定布局和表格总宽度。
 - 到达宽度上限或宽度未变时，不再重复写样式。
 - 松手时立即应用最后位置；取消、失焦、丢失捕获、禁用时清理拖动状态。
 - 使用表格所属窗口的事件与动画帧，兼容独立窗口的文档上下文。
 - 保留上游表格 ID 算法及配置格式，兼容已有的 `data.json`。
 
-拖动一列时表格总宽度随之变化，其他列保持原宽度。首次初始化仍需读取表头并清理
-旧版单元格约束；浏览器依然需要重新布局和绘制表格，超长表格的开销不会消失。
+**1.2.1：表格总宽度限制在阅读区域内。** 拖动分隔线时，一列加宽多少，右侧相邻列就
+缩窄多少，表格总宽度保持不变；相邻列达到宽度限制后停止继续拖动。旧版超宽配置会
+按比例收拢，阅读区域缩窄或放宽时也会重新适配，保留列宽比例。
+
+当阅读区域窄到容不下所有列的最小宽度时，优先适配区域并临时降低可行最小值，避免
+撑出横向滚动条。普通长文本、URL 和代码会换行。首次初始化仍需读取表头并清理旧版
+约束；浏览器依然需要布局和绘制长表格。
 
 测试条件、原始数据和验证边界见 [性能报告](docs/PERFORMANCE.md)。
 
 ### 安装与升级
 
 1. 从[本 Fork 的 Releases](https://github.com/WNGjeanm/obsidian-table-column-resizer/releases/latest)
-   下载 `table-column-resizer-performance-1.2.0.zip`。
+   下载 `table-column-resizer-performance-1.2.1.zip`。
 2. 在 Obsidian 中关闭原插件，备份原来的 `.obsidian/plugins/table-column-resizer/` 文件夹。
 3. 解压后，将 `table-column-resizer` 文件夹中的文件复制到同名插件目录。保留已有
    `data.json`，无需修改笔记。
@@ -43,7 +48,7 @@ See [LICENSE](LICENSE) and [attribution](THIRD_PARTY_NOTICES.md).
 本分支。回退时关闭插件并恢复备份即可。
 
 设置沿用上游：启用开关、最小列宽（默认 50px）、最大列宽（默认 500px）。
-达到上限后列宽会停止增加，可按需要调大设置。
+拖动同时受相邻列最小/最大宽度约束；到达边界后停止，避免撑大整张表格。
 
 ### 范围与限制
 
@@ -59,8 +64,11 @@ See [LICENSE](LICENSE) and [attribution](THIRD_PARTY_NOTICES.md).
 This independent MIT-licensed fork improves the continuous-drag path of bubble's
 Table Column Resizer 1.1.0. It coalesces pointer moves with `requestAnimationFrame`,
 replaces per-row cell writes with column-level layout, and flushes the last
-position on release. Resizing changes the table's total width and keeps the other
-columns stable. Existing table IDs and persisted widths remain compatible.
+position on release. In **1.2.1**, dragging redistributes the two adjacent columns
+while keeping the table's total width fixed. Existing oversized widths are fitted
+to the reading content, and pane resizing preserves preferred column proportions.
+Existing table IDs and persisted widths remain compatible. If all configured
+minimums cannot fit in a very narrow pane, fitting the pane takes priority.
 
 Download the ZIP from **this fork's Releases**, disable the existing plugin, back
 up its folder, and replace the files in `.obsidian/plugins/table-column-resizer/`.

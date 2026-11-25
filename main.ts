@@ -1,5 +1,5 @@
 import { Plugin, MarkdownPostProcessorContext, MarkdownRenderChild, PluginSettingTab, Setting, SettingDefinitionItem } from 'obsidian';
-import { ColumnLayout, prepareColumnLayout, updateColumnWidth } from './column-layout';
+import { ColumnLayout, availableTableWidth, columnResizeBounds, fitLayoutToContainer, prepareColumnLayout, restoreColumnWidths, tableContainers, updateColumnWidth } from './column-layout';
 
 interface PluginSettings {
 	enabled: boolean;
@@ -36,6 +36,7 @@ export default class TableColumnResizerPlugin extends Plugin {
 	private currentColumn = -1;
 	private startX = 0;
 	private startWidth = 0;
+	private dragBounds = { min: 0, max: Infinity };
 	private layouts = new WeakMap<HTMLTableElement, ColumnLayout>();
 	private dragDocument: Document | null = null;
 	private dragWindow: Window | null = null;
@@ -46,6 +47,7 @@ export default class TableColumnResizerPlugin extends Plugin {
 	private changed = false;
 	private documents = new Set<Document>();
 	private pendingRestores = new Map<HTMLTableElement, ResizeObserver>();
+	private containerObservers = new Map<HTMLTableElement, ResizeObserver>();
 
 	async onload() {
 		const raw: unknown = await this.loadData();
@@ -67,6 +69,8 @@ export default class TableColumnResizerPlugin extends Plugin {
 		this.removeAllHandles();
 		this.documents.clear();
 		this.clearPendingRestores();
+		this.containerObservers.forEach(observer => observer.disconnect());
+		this.containerObservers.clear();
 	}
 
 	processTables(element: HTMLElement, context: MarkdownPostProcessorContext) {
@@ -78,6 +82,9 @@ export default class TableColumnResizerPlugin extends Plugin {
 			child.onunload = () => {
 				this.pendingRestores.get(table)?.disconnect();
 				this.pendingRestores.delete(table);
+				this.containerObservers.get(table)?.disconnect();
+				this.containerObservers.delete(table);
+				this.layouts.delete(table);
 				if (this.currentTable === table) this.endResize();
 			};
 			context.addChild(child);
@@ -110,7 +117,6 @@ export default class TableColumnResizerPlugin extends Plugin {
 
 	applySavedWidths(table: HTMLTableElement, sourcePath: string) {
 		const widths = this.tableWidths[this.getTableId(table, sourcePath)];
-		if (!widths) return;
 		// Markdown post-processors can receive detached/hidden sections. Measuring
 		// them now would freeze untouched columns at zero; wait for real geometry.
 		if (!table.isConnected || table.getBoundingClientRect().width <= 0) {
@@ -128,10 +134,30 @@ export default class TableColumnResizerPlugin extends Plugin {
 		this.pendingRestores.get(table)?.disconnect();
 		this.pendingRestores.delete(table);
 
-		const entries = Object.entries(widths) as [string, number][];
-		entries.forEach(([columnIndex, width]) => {
-			this.setColumnWidth(table, Number.parseInt(columnIndex, 10), width);
+		let layout = this.layouts.get(table);
+		if (!layout) {
+			layout = prepareColumnLayout(table, this.settings.minColumnWidth, widths);
+			this.layouts.set(table, layout);
+		} else if (widths) {
+			restoreColumnWidths(table, layout, widths, this.settings.minColumnWidth);
+		}
+		this.observeContainer(table, layout);
+	}
+
+	private observeContainer(table: HTMLTableElement, layout: ColumnLayout) {
+		if (this.containerObservers.has(table)) return;
+		let previous = availableTableWidth(table);
+		const observer = new ResizeObserver(() => {
+			if (!this.settings.enabled || !table.isConnected) return;
+			const available = availableTableWidth(table);
+			if (Math.abs(available - previous) < 0.5) return;
+			previous = available;
+			if (Math.abs(Math.min(layout.preferredWidth, available) - layout.totalWidth) < 0.5) return;
+			if (this.currentTable === table) this.finishResize();
+			fitLayoutToContainer(table, layout, this.settings.minColumnWidth);
 		});
+		tableContainers(table).forEach(container => observer.observe(container));
+		this.containerObservers.set(table, observer);
 	}
 
 	private onHandlePointerDown(e: PointerEvent, table: HTMLTableElement, columnIndex: number, sourcePath: string) {
@@ -151,11 +177,14 @@ export default class TableColumnResizerPlugin extends Plugin {
 		this.pendingWidth = null;
 		this.changed = false;
 
-		const headerCell = table.rows[0]?.cells[columnIndex];
-		this.startWidth = headerCell ? headerCell.getBoundingClientRect().width : this.settings.minColumnWidth;
-
-		// Fixed layout makes the browser respect the exact widths we set.
-		if (!this.layouts.has(table)) this.layouts.set(table, prepareColumnLayout(table));
+		let layout = this.layouts.get(table);
+		if (!layout) {
+			layout = prepareColumnLayout(table, this.settings.minColumnWidth);
+			this.layouts.set(table, layout);
+		}
+		fitLayoutToContainer(table, layout, this.settings.minColumnWidth);
+		this.startWidth = layout.widths[columnIndex];
+		this.dragBounds = columnResizeBounds(layout, columnIndex, this.settings.minColumnWidth, this.settings.maxColumnWidth);
 		table.setAttribute('data-resizing', 'true');
 		this.dragDocument.body.classList.add('table-resizing');
 
@@ -181,8 +210,8 @@ export default class TableColumnResizerPlugin extends Plugin {
 
 		const deltaX = e.clientX - this.startX;
 		const newWidth = Math.max(
-			this.settings.minColumnWidth,
-			Math.min(Math.round(this.startWidth + deltaX), this.settings.maxColumnWidth)
+			this.dragBounds.min,
+			Math.min(this.startWidth + deltaX, this.dragBounds.max)
 		);
 
 		this.pendingWidth = newWidth;
@@ -197,9 +226,11 @@ export default class TableColumnResizerPlugin extends Plugin {
 	private flushWidth() {
 		if (!this.currentTable || this.pendingWidth === null) return;
 		if (this.currentTable.isConnected) {
-			const before = this.layouts.get(this.currentTable)?.widths[this.currentColumn];
+			const layout = this.layouts.get(this.currentTable);
+			const before = layout?.widths[this.currentColumn];
+			if (layout && !this.changed && before !== this.pendingWidth) layout.preferredWidths = layout.widths.slice();
 			this.setColumnWidth(this.currentTable, this.currentColumn, this.pendingWidth);
-			this.changed = this.changed || before !== this.pendingWidth;
+			this.changed = this.changed || before !== this.layouts.get(this.currentTable)?.widths[this.currentColumn];
 		}
 		this.pendingWidth = null;
 	}
@@ -259,10 +290,11 @@ export default class TableColumnResizerPlugin extends Plugin {
 	setColumnWidth(table: HTMLTableElement, columnIndex: number, width: number) {
 		let layout = this.layouts.get(table);
 		if (!layout) {
-			layout = prepareColumnLayout(table);
+			layout = prepareColumnLayout(table, this.settings.minColumnWidth);
 			this.layouts.set(table, layout);
 		}
-		updateColumnWidth(table, layout, columnIndex, width);
+		const bounds = this.currentTable === table ? this.dragBounds : columnResizeBounds(layout, columnIndex, this.settings.minColumnWidth, this.settings.maxColumnWidth);
+		updateColumnWidth(layout, columnIndex, Math.max(bounds.min, Math.min(width, bounds.max)));
 	}
 
 	async saveWidths(table: HTMLTableElement, sourcePath: string) {
@@ -341,6 +373,8 @@ export default class TableColumnResizerPlugin extends Plugin {
 			this.finishResize();
 			this.removeAllHandles();
 			this.clearPendingRestores();
+			this.containerObservers.forEach(observer => observer.disconnect());
+			this.containerObservers.clear();
 		}
 		await this.saveSettings();
 	}

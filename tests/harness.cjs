@@ -62,6 +62,24 @@ async function pageFor(browser, code, rows = 30) {
       target.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, clientX: x, pointerId: id }));
     };
     window.nextFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
+    window.resetTable = async ({ readingWidth = 900, tableWidth, saved, intrinsicWrapper = false, legacy = false } = {}) => {
+      plugin.onunload();
+      const fresh = table.cloneNode(true);
+      fresh.removeAttribute('style'); fresh.removeAttribute('data-resizable');
+      fresh.querySelectorAll('colgroup, .table-column-resizer').forEach(el => el.remove());
+      table.closest('.markdown-preview-view')?.remove(); table.remove();
+      const pane = document.createElement('div'); pane.className = 'markdown-preview-view'; pane.style.width = `${readingWidth}px`;
+      const wrapper = document.createElement('div'); wrapper.className = 'table-wrapper';
+      if (intrinsicWrapper) wrapper.style.display = 'table';
+      document.body.appendChild(pane); pane.appendChild(wrapper); wrapper.appendChild(fresh);
+      window.table = fresh;
+      if (tableWidth) fresh.style.width = `${tableWidth}px`;
+      if (legacy) Array.from(fresh.rows).forEach(row => Object.assign(row.cells[0].style, { width: '180px', minWidth: '180px', maxWidth: '180px' }));
+      window.plugin = new TCR.default(); plugin.app = { vault: { getAbstractFileByPath() { return {}; } } }; await plugin.onload();
+      if (saved) plugin.tableWidths[plugin.getTableId(fresh, 'fixture.md')] = saved;
+      plugin.makeTableResizable(fresh, 'fixture.md');
+      window.pane = pane;
+    };
   });
   return page;
 }

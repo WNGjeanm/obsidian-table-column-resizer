@@ -2,6 +2,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { launch, pageFor, root, bundle } = require('../tests/harness.cjs');
+const { version } = require('../package.json');
 
 const upstreamCommit = 'bb989d5d33bcc532981f4feaad43659bdefd995a';
 const oldSource = execFileSync('git', ['show', `${upstreamCommit}:main.js`], { cwd: root, encoding: 'utf8' });
@@ -13,7 +14,7 @@ const oldSource = execFileSync('git', ['show', `${upstreamCommit}:main.js`], { c
     const upstreamCode = await bundle(oldSource);
     const samples = [];
     for (const rows of [50, 300, 1000]) {
-      for (const [variant, source] of [['upstream-1.1.0', upstreamCode], ['performance-1.2.0', code]]) {
+      for (const [variant, source] of [['upstream-1.1.0', upstreamCode], [`performance-${version}`, code]]) {
         const page = await pageFor(browser, source, rows);
         await page.evaluate(() => { drag('pointerdown', 100); table.getBoundingClientRect(); });
         const session = await page.context().newCDPSession(page);
@@ -50,7 +51,7 @@ const oldSource = execFileSync('git', ['show', `${upstreamCommit}:main.js`], { c
         console.log(JSON.stringify(samples.at(-1)));
         if (variant.startsWith('performance') && (result.calls > 60 || result.cellMutations !== 0)) throw new Error('Drag complexity regression');
         if (rows === 300 && variant.startsWith('performance')) {
-          await page.screenshot({ path: path.join(root, 'docs/performance-preview.png') });
+          await page.screenshot({ path: path.join(root, `docs/performance-preview-${version}.png`) });
         }
         await page.close();
       }
@@ -58,6 +59,6 @@ const oldSource = execFileSync('git', ['show', `${upstreamCommit}:main.js`], { c
     const report = { date: new Date().toISOString(), browser: browser.version(), upstreamCommit,
       methodology: 'Synthetic pointer-event bursts: 8 events per animation frame, 60 frames, 3 columns of wrapping text. One warm setup, one run per case. updateMs measures JS inside setColumnWidth only; layoutFlushMs measures explicit post-frame geometry reads and is not total rendering time. layoutDurationMs/styleDurationMs are CDP Performance counter deltas over the drag, including release. elapsedMs includes frame waiting. MutationObserver instrumentation affects timings. This is a Chromium fixture, not an Obsidian FPS measurement.', samples };
     fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'docs/benchmark-results.json'), JSON.stringify(report, null, 2) + '\n');
+    fs.writeFileSync(path.join(root, `docs/benchmark-results-${version}.json`), JSON.stringify(report, null, 2) + '\n');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

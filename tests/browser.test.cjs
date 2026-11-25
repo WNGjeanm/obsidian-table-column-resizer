@@ -5,6 +5,8 @@ let browser, code;
 before(async () => ({ browser, code } = await launch()));
 after(async () => browser?.close());
 
+require('./fixed-width.cjs')(test, assert, check);
+
 async function check(callback, rows) {
   const page = await pageFor(browser, code, rows);
   try { return await callback(page); } finally { await page.close(); }
@@ -31,10 +33,10 @@ test('release before the next frame applies the release position and saves once'
   const r = await page.evaluate(async () => {
     drag('pointerdown', 100); const start = table.rows[0].cells[0].getBoundingClientRect().width;
     drag('pointermove', 120); drag('pointerup', 160); await nextFrame();
-    return { width: parseFloat(table.querySelector('col').style.width), expected: Math.round(start + 60),
+    return { width: parseFloat(table.querySelector('col').style.width), expected: start + 60,
       saves: plugin.saved.length, busy: document.body.classList.contains('table-resizing') };
   });
-  assert.equal(r.width, r.expected); assert.equal(r.saves, 1); assert.equal(r.busy, false);
+  assert.ok(Math.abs(r.width - r.expected) < 0.02); assert.equal(r.saves, 1); assert.equal(r.busy, false);
 }));
 
 test('saved widths restore on a fresh render without changing the table ID', () => check(async page => {
@@ -53,10 +55,8 @@ test('saved widths restore on a fresh render without changing the table ID', () 
 }));
 
 test('legacy 1.1.0 widths restore and stale per-cell constraints are cleared once', () => check(async page => {
-  const r = await page.evaluate(() => {
-    plugin.tableWidths[plugin.getTableId(table, 'fixture.md')] = { 0: 240, 1: 300 };
-    Array.from(table.rows).forEach(row => Object.assign(row.cells[0].style, { width: '180px', minWidth: '180px', maxWidth: '180px' }));
-    plugin.applySavedWidths(table, 'fixture.md');
+  const r = await page.evaluate(async () => {
+    await resetTable({ saved: { 0: 240, 1: 300 }, legacy: true });
     return { widths: Array.from(table.querySelectorAll('col')).slice(0, 2).map(c => c.style.width),
       remaining: Array.from(table.rows).some(row => row.cells[0].style.minWidth) };
   });
@@ -65,6 +65,7 @@ test('legacy 1.1.0 widths restore and stale per-cell constraints are cleared onc
 
 test('limits clamp widths and repeated movement at the limit produces no style writes', () => check(async page => {
   const r = await page.evaluate(async () => {
+    await resetTable({ saved: { 0: 200, 1: 200, 2: 200 } });
     drag('pointerdown', 100); drag('pointermove', 10000); await nextFrame();
     const max = table.querySelector('col').style.width;
     let changes = 0; const observer = new MutationObserver(r => { changes += r.length; });
@@ -73,7 +74,7 @@ test('limits clamp widths and repeated movement at the limit produces no style w
     drag('pointermove', -10000); await nextFrame();
     return { max, min: table.querySelector('col').style.width, changes };
   });
-  assert.deepEqual(r, { max: '500px', min: '50px', changes: 0 });
+  assert.deepEqual(r, { max: '350px', min: '50px', changes: 0 });
 }));
 
 test('unrelated pointers cannot resize or end the active drag', () => check(async page => {
@@ -114,15 +115,16 @@ test('detaching a table during a drag does not save stale content', () => check(
   assert.deepEqual(r, { saves: 0, busy: false });
 }));
 
-test('resizing grows the table by the drag delta and keeps adjacent columns stable', () => check(async page => {
+test('resizing redistributes the adjacent pair and keeps the table and other columns fixed', () => check(async page => {
   const r = await page.evaluate(() => {
     const before = Array.from(table.rows[0].cells).map(c => c.getBoundingClientRect().width);
     const total = table.getBoundingClientRect().width;
     drag('pointerdown', 100); drag('pointerup', 180);
     return { before, after: Array.from(table.rows[0].cells).map(c => c.getBoundingClientRect().width), delta: table.getBoundingClientRect().width - total };
   });
-  assert.ok(Math.abs(r.delta - 80) < 1);
-  assert.ok(Math.abs(r.after[1] - r.before[1]) < 1);
+  assert.ok(Math.abs(r.delta) < 1);
+  assert.ok(Math.abs(r.after[0] - r.before[0] - 80) < 1);
+  assert.ok(Math.abs(r.after[1] - r.before[1] + 80) < 1);
   assert.ok(Math.abs(r.after[2] - r.before[2]) < 1);
 }));
 

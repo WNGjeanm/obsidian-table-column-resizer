@@ -26,6 +26,31 @@ table[data-resizable] th {
 	position: relative;
 }
 
+/* Scoped wrapping lets a fitted table stay inside the reading pane even with URLs. */
+table[data-resizable] th,
+table[data-resizable] td {
+	min-width: 0;
+	max-width: none;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
+table[data-resizable] img,
+table[data-resizable] video,
+table[data-resizable] pre {
+	max-width: 100%;
+}
+
+table[data-resizable] pre {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+table[data-resizable] code {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
 /* Reveal the handle on cell hover, handle hover, and while dragging. */
 table[data-resizable] th:hover .table-column-resizer,
 .table-column-resizer:hover,

@@ -17,12 +17,12 @@ const sha = bytes => createHash('sha256').update(bytes).digest('hex');
   const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
   if (!main.includes('Copyright (c) 2024 SOLO Builder') || !main.includes('Permission is hereby granted')) throw new Error('Bundled license missing');
   const files = ['main.js', 'manifest.json', 'styles.css', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'INSTALL.md'];
-  const dist = path.join(root, 'dist'); fs.mkdirSync(dist, { recursive: true });
+  const dist = path.join(root, 'dist', manifest.version); fs.mkdirSync(dist, { recursive: true });
   const zip = new JSZip();
   for (const file of files) {
     const bytes = fs.readFileSync(path.join(root, file));
     fs.writeFileSync(path.join(dist, file), bytes);
-    zip.file(`${manifest.id}/${file}`, bytes, { date: new Date('2026-10-27T00:00:00Z') });
+    zip.file(`${manifest.id}/${file}`, bytes, { date: new Date('2026-11-25T00:00:00Z') });
   }
   const name = `table-column-resizer-performance-${manifest.version}.zip`;
   const zipBytes = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });

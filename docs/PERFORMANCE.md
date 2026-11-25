@@ -1,5 +1,33 @@
 # Performance evidence / 性能验证
 
+## Current 1.2.1 — bounded table width
+
+The table is fitted to the reading content before a drag. Each frame updates two
+adjacent `<col>` elements and does not change the table width. Container resizing
+is handled separately; initial setup and viewport changes can redistribute all
+column widths, but continuous dragging still performs no per-row style writes.
+
+The 1.2.1 data is in [benchmark-results-1.2.1.json](benchmark-results-1.2.1.json).
+There are 31 browser regressions, including a full-width +10px drag, repeated
+extreme drags, adjacent-column limits, oversized persisted data, padded/intrinsic
+wrappers, temporary 100px panes and preservation of preferred proportions.
+
+An additional native-mouse fixture demonstrates a 600px reading region and a
+600px table: the first column gains 80px, the second loses 80px, and the table
+remains 600px. Measurements are in [fixed-width-evidence.json](fixed-width-evidence.json).
+These are Chromium fixtures with an Obsidian API stub, not live Obsidian captures.
+
+Before:
+
+![600px table before dragging](fixed-width-before.png)
+
+After:
+
+![The adjacent columns exchange 80px while the table remains 600px](fixed-width-after.png)
+
+The sections below retain the historical **1.2.0** performance measurements;
+they do not describe the corrected 1.2.1 drag behavior.
+
 ## Scope
 
 Compared with upstream 1.1.0 at commit
@@ -20,7 +48,7 @@ may already coalesce physical pointer events. It is not an Obsidian FPS test.
 | 300 | 480 | 60 | 433,440 | 0 | 120 |
 | 1,000 | 480 | 60 | 1,441,440 | 0 | 120 |
 
-The deterministic improvement is the amount of submitted DOM work: one update
+The deterministic 1.2.0 improvement is the amount of submitted DOM work: one update
 per frame and two element style writes per update, independent of row count.
 These numbers do **not** imply that every upstream style write caused its own
 synchronous layout, nor that the complete drag is faster by the mutation-count

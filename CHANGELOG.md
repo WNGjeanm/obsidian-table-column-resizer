@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.1] - 2026-11-25
+
+### Fixed
+- Keep the table width fixed during a drag: widening a column shrinks its right neighbor by the same amount.
+- Stop at either column's width constraints instead of growing the table beyond the reading pane.
+- Fit initially oversized tables and legacy 1.2.0 saved widths within the reading content, including padded and intrinsic-width wrappers.
+- Adapt to narrower/wider reading panes without discarding preferred column proportions or rewriting saved data on viewport changes.
+- Wrap long text, URLs and code within resizable cells; use feasible minimums when the pane is narrower than all configured minimums combined.
+- Disconnect container-size observers when a rendered section unloads or the plugin is disabled/unloaded.
+
+### Validation
+- 31 real-browser regression tests, including the reported +10-width scenario, pane resizing, repeated extreme drags and legacy widths.
+- Retains animation-frame coalescing, column-level writes, upstream table IDs and original MIT attribution.
+
 ## [1.2.0] - 2026-10-27 — independent performance fork
 
 Maintained by WNGjeanm, based on bubble-wu's 1.1.0. Original MIT copyright and

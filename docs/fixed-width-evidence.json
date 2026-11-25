@@ -1,0 +1,25 @@
+{
+  "date": "2026-11-25T02:12:24.549Z",
+  "browser": "158.0.4370.33",
+  "fixture": "Chromium with Obsidian API stub; native Playwright mouse input",
+  "before": {
+    "readingWidth": 600,
+    "tableWidth": 600,
+    "scrollWidth": 600,
+    "columns": [
+      199.65625,
+      199.65625,
+      199.6875
+    ]
+  },
+  "after": {
+    "readingWidth": 600,
+    "tableWidth": 600,
+    "scrollWidth": 600,
+    "columns": [
+      279.65625,
+      119.65625,
+      199.6875
+    ]
+  }
+}

@@ -54,11 +54,94 @@ module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
 
 // column-layout.ts
-function prepareColumnLayout(table) {
+function tableContainers(table) {
+  const containers = [];
+  for (let el = table.parentElement; el; el = el.parentElement) {
+    containers.push(el);
+    if (el === table.ownerDocument.body || el.matches(".markdown-preview-view, .markdown-reading-view"))
+      break;
+  }
+  return containers;
+}
+function availableTableWidth(table) {
+  var _a, _b, _c, _d, _e, _f, _g;
+  const win = table.ownerDocument.defaultView;
+  let available = Infinity;
+  for (const el of tableContainers(table)) {
+    const style2 = win == null ? void 0 : win.getComputedStyle(el);
+    const content = el.clientWidth - (parseFloat((_a = style2 == null ? void 0 : style2.paddingLeft) != null ? _a : "") || 0) - (parseFloat((_b = style2 == null ? void 0 : style2.paddingRight) != null ? _b : "") || 0);
+    const intrinsic = /^(inline|inline-block|inline-table|table)$/.test((_c = style2 == null ? void 0 : style2.display) != null ? _c : "") && !el.style.width;
+    if (content > 0 && !intrinsic)
+      available = Math.min(available, content);
+    if (intrinsic && (style2 == null ? void 0 : style2.maxWidth.endsWith("px")))
+      available = Math.min(available, parseFloat(style2.maxWidth));
+    if (intrinsic && (style2 == null ? void 0 : style2.maxWidth.endsWith("%")) && el.parentElement) {
+      const parentStyle = win == null ? void 0 : win.getComputedStyle(el.parentElement);
+      const parentContent = el.parentElement.clientWidth - (parseFloat((_d = parentStyle == null ? void 0 : parentStyle.paddingLeft) != null ? _d : "") || 0) - (parseFloat((_e = parentStyle == null ? void 0 : parentStyle.paddingRight) != null ? _e : "") || 0);
+      if (parentContent > 0)
+        available = Math.min(available, parentContent * parseFloat(style2.maxWidth) / 100);
+    }
+  }
+  const style = win == null ? void 0 : win.getComputedStyle(table);
+  return Math.max(0, available - (parseFloat((_f = style == null ? void 0 : style.marginLeft) != null ? _f : "") || 0) - (parseFloat((_g = style == null ? void 0 : style.marginRight) != null ? _g : "") || 0));
+}
+function fitWidths(weights, budget, minimum) {
+  if (!weights.length)
+    return [];
+  weights = weights.map((width) => Number.isFinite(width) && width > 0 ? width : 1);
+  const floor = Math.min(Math.max(0, minimum), budget / weights.length);
+  const result = weights.map(() => 0);
+  let pending = weights.map((_, i) => i);
+  let remaining = budget;
+  while (pending.length) {
+    const sum = pending.reduce((total, i) => total + weights[i], 0);
+    const small = pending.filter((i) => remaining * weights[i] / sum < floor);
+    if (!small.length) {
+      pending.forEach((i) => {
+        result[i] = remaining * weights[i] / sum;
+      });
+      break;
+    }
+    const fixed = new Set(small);
+    small.forEach((i) => {
+      result[i] = floor;
+      remaining -= floor;
+    });
+    pending = pending.filter((i) => !fixed.has(i));
+  }
+  result[result.length - 1] += budget - result.reduce((sum, width) => sum + width, 0);
+  return result;
+}
+function applyWidths(layout) {
+  layout.columns.forEach((col, i) => {
+    col.style.width = `${layout.widths[i]}px`;
+  });
+}
+function fitLayoutToContainer(table, layout, minimum) {
+  const total = Math.min(layout.preferredWidth, availableTableWidth(table));
+  if (!Number.isFinite(total) || total <= 0 || Math.abs(total - layout.totalWidth) < 0.01)
+    return;
+  layout.totalWidth = total;
+  layout.widths = fitWidths(layout.preferredWidths, Math.max(0, total - layout.chromeWidth), minimum);
+  applyWidths(layout);
+  table.style.width = `${total}px`;
+}
+function restoreColumnWidths(table, layout, saved, minimum) {
+  const weights = layout.widths.map((width, i) => Number.isFinite(saved[i]) && saved[i] > 0 ? saved[i] : width);
+  layout.preferredWidths = weights.slice();
+  layout.preferredWidth = weights.reduce((sum, width) => sum + width, 0) + layout.chromeWidth;
+  layout.totalWidth = Math.min(layout.preferredWidth, availableTableWidth(table));
+  layout.widths = fitWidths(weights, Math.max(0, layout.totalWidth - layout.chromeWidth), minimum);
+  applyWidths(layout);
+  table.style.width = `${layout.totalWidth}px`;
+}
+function prepareColumnLayout(table, minimum, saved) {
   var _a, _b;
   const cells = Array.from((_b = (_a = table.rows[0]) == null ? void 0 : _a.cells) != null ? _b : []);
   const widths = cells.map((cell) => cell.getBoundingClientRect().width);
   const totalWidth = table.getBoundingClientRect().width;
+  const chromeWidth = Math.max(0, totalWidth - widths.reduce((sum, width) => sum + width, 0));
+  const available = availableTableWidth(table);
   const group = table.ownerDocument.createElement("colgroup");
   group.setAttribute("data-tcr-columns", "true");
   const columns = widths.map((width) => {
@@ -82,17 +165,36 @@ function prepareColumnLayout(table) {
     width: `${totalWidth}px`,
     boxSizing: "border-box",
     minWidth: "0",
-    maxWidth: "none"
+    maxWidth: "100%"
   });
-  return { columns, widths, totalWidth };
+  const layout = { columns, widths, preferredWidths: widths.slice(), totalWidth, preferredWidth: totalWidth, chromeWidth };
+  if (saved)
+    restoreColumnWidths(table, layout, saved, minimum);
+  else if (totalWidth > available)
+    fitLayoutToContainer(table, layout, minimum);
+  return layout;
 }
-function updateColumnWidth(table, layout, index, width) {
-  if (!layout.columns[index] || !Number.isFinite(width) || width <= 0 || layout.widths[index] === width)
+function columnResizeBounds(layout, index, minimum, maximum) {
+  const left = layout.widths[index], right = layout.widths[index + 1];
+  const sum = left + right;
+  const floor = Math.min(minimum, (layout.totalWidth - layout.chromeWidth) / layout.widths.length);
+  return {
+    min: Math.max(Math.min(floor, left), sum - Math.max(maximum, right)),
+    max: Math.min(Math.max(maximum, left), sum - Math.min(floor, right))
+  };
+}
+function updateColumnWidth(layout, index, width) {
+  if (!layout.columns[index + 1] || !Number.isFinite(width) || width <= 0 || Math.abs(layout.widths[index] - width) < 1e-3)
     return;
-  layout.totalWidth += width - layout.widths[index];
+  const adjacent = layout.widths[index] + layout.widths[index + 1] - width;
+  if (adjacent <= 0)
+    return;
   layout.widths[index] = width;
+  layout.widths[index + 1] = adjacent;
+  layout.preferredWidths[index] = width;
+  layout.preferredWidths[index + 1] = adjacent;
   layout.columns[index].style.width = `${width}px`;
-  table.style.width = `${layout.totalWidth}px`;
+  layout.columns[index + 1].style.width = `${adjacent}px`;
 }
 
 // main.ts
@@ -112,6 +214,7 @@ var TableColumnResizerPlugin = class extends import_obsidian.Plugin {
     this.currentColumn = -1;
     this.startX = 0;
     this.startWidth = 0;
+    this.dragBounds = { min: 0, max: Infinity };
     this.layouts = /* @__PURE__ */ new WeakMap();
     this.dragDocument = null;
     this.dragWindow = null;
@@ -122,13 +225,14 @@ var TableColumnResizerPlugin = class extends import_obsidian.Plugin {
     this.changed = false;
     this.documents = /* @__PURE__ */ new Set();
     this.pendingRestores = /* @__PURE__ */ new Map();
+    this.containerObservers = /* @__PURE__ */ new Map();
     this.handlePointerMove = (e) => {
       if (!this.isResizing || !this.currentTable || e.pointerId !== this.pointerId)
         return;
       const deltaX = e.clientX - this.startX;
       const newWidth = Math.max(
-        this.settings.minColumnWidth,
-        Math.min(Math.round(this.startWidth + deltaX), this.settings.maxColumnWidth)
+        this.dragBounds.min,
+        Math.min(this.startWidth + deltaX, this.dragBounds.max)
       );
       this.pendingWidth = newWidth;
       if (this.frame === null && this.dragWindow) {
@@ -168,6 +272,8 @@ var TableColumnResizerPlugin = class extends import_obsidian.Plugin {
     this.removeAllHandles();
     this.documents.clear();
     this.clearPendingRestores();
+    this.containerObservers.forEach((observer) => observer.disconnect());
+    this.containerObservers.clear();
   }
   processTables(element, context) {
     if (!this.settings.enabled)
@@ -178,9 +284,12 @@ var TableColumnResizerPlugin = class extends import_obsidian.Plugin {
       this.makeTableResizable(table, context.sourcePath);
       const child = new import_obsidian.MarkdownRenderChild(table);
       child.onunload = () => {
-        var _a;
+        var _a, _b;
         (_a = this.pendingRestores.get(table)) == null ? void 0 : _a.disconnect();
         this.pendingRestores.delete(table);
+        (_b = this.containerObservers.get(table)) == null ? void 0 : _b.disconnect();
+        this.containerObservers.delete(table);
+        this.layouts.delete(table);
         if (this.currentTable === table)
           this.endResize();
       };
@@ -210,8 +319,6 @@ var TableColumnResizerPlugin = class extends import_obsidian.Plugin {
   applySavedWidths(table, sourcePath) {
     var _a;
     const widths = this.tableWidths[this.getTableId(table, sourcePath)];
-    if (!widths)
-      return;
     if (!table.isConnected || table.getBoundingClientRect().width <= 0) {
       if (!this.pendingRestores.has(table)) {
         const observer = new ResizeObserver(() => {
@@ -226,13 +333,37 @@ var TableColumnResizerPlugin = class extends import_obsidian.Plugin {
     }
     (_a = this.pendingRestores.get(table)) == null ? void 0 : _a.disconnect();
     this.pendingRestores.delete(table);
-    const entries = Object.entries(widths);
-    entries.forEach(([columnIndex, width]) => {
-      this.setColumnWidth(table, Number.parseInt(columnIndex, 10), width);
+    let layout = this.layouts.get(table);
+    if (!layout) {
+      layout = prepareColumnLayout(table, this.settings.minColumnWidth, widths);
+      this.layouts.set(table, layout);
+    } else if (widths) {
+      restoreColumnWidths(table, layout, widths, this.settings.minColumnWidth);
+    }
+    this.observeContainer(table, layout);
+  }
+  observeContainer(table, layout) {
+    if (this.containerObservers.has(table))
+      return;
+    let previous = availableTableWidth(table);
+    const observer = new ResizeObserver(() => {
+      if (!this.settings.enabled || !table.isConnected)
+        return;
+      const available = availableTableWidth(table);
+      if (Math.abs(available - previous) < 0.5)
+        return;
+      previous = available;
+      if (Math.abs(Math.min(layout.preferredWidth, available) - layout.totalWidth) < 0.5)
+        return;
+      if (this.currentTable === table)
+        this.finishResize();
+      fitLayoutToContainer(table, layout, this.settings.minColumnWidth);
     });
+    tableContainers(table).forEach((container) => observer.observe(container));
+    this.containerObservers.set(table, observer);
   }
   onHandlePointerDown(e, table, columnIndex, sourcePath) {
-    var _a, _b, _c;
+    var _a, _b;
     if (this.isResizing || e.button !== 0)
       return;
     e.preventDefault();
@@ -249,10 +380,14 @@ var TableColumnResizerPlugin = class extends import_obsidian.Plugin {
     this.dragHandle = e.currentTarget;
     this.pendingWidth = null;
     this.changed = false;
-    const headerCell = (_a = table.rows[0]) == null ? void 0 : _a.cells[columnIndex];
-    this.startWidth = headerCell ? headerCell.getBoundingClientRect().width : this.settings.minColumnWidth;
-    if (!this.layouts.has(table))
-      this.layouts.set(table, prepareColumnLayout(table));
+    let layout = this.layouts.get(table);
+    if (!layout) {
+      layout = prepareColumnLayout(table, this.settings.minColumnWidth);
+      this.layouts.set(table, layout);
+    }
+    fitLayoutToContainer(table, layout, this.settings.minColumnWidth);
+    this.startWidth = layout.widths[columnIndex];
+    this.dragBounds = columnResizeBounds(layout, columnIndex, this.settings.minColumnWidth, this.settings.maxColumnWidth);
     table.setAttribute("data-resizing", "true");
     this.dragDocument.body.classList.add("table-resizing");
     if (this.dragHandle) {
@@ -264,17 +399,20 @@ var TableColumnResizerPlugin = class extends import_obsidian.Plugin {
     this.dragDocument.addEventListener("pointermove", this.handlePointerMove);
     this.dragDocument.addEventListener("pointerup", this.handlePointerUp);
     this.dragDocument.addEventListener("pointercancel", this.handlePointerCancel);
-    (_b = this.dragHandle) == null ? void 0 : _b.addEventListener("lostpointercapture", this.handleCaptureLost);
-    (_c = this.dragWindow) == null ? void 0 : _c.addEventListener("blur", this.handleCaptureLost);
+    (_a = this.dragHandle) == null ? void 0 : _a.addEventListener("lostpointercapture", this.handleCaptureLost);
+    (_b = this.dragWindow) == null ? void 0 : _b.addEventListener("blur", this.handleCaptureLost);
   }
   flushWidth() {
     var _a;
     if (!this.currentTable || this.pendingWidth === null)
       return;
     if (this.currentTable.isConnected) {
-      const before = (_a = this.layouts.get(this.currentTable)) == null ? void 0 : _a.widths[this.currentColumn];
+      const layout = this.layouts.get(this.currentTable);
+      const before = layout == null ? void 0 : layout.widths[this.currentColumn];
+      if (layout && !this.changed && before !== this.pendingWidth)
+        layout.preferredWidths = layout.widths.slice();
       this.setColumnWidth(this.currentTable, this.currentColumn, this.pendingWidth);
-      this.changed = this.changed || before !== this.pendingWidth;
+      this.changed = this.changed || before !== ((_a = this.layouts.get(this.currentTable)) == null ? void 0 : _a.widths[this.currentColumn]);
     }
     this.pendingWidth = null;
   }
@@ -322,10 +460,11 @@ var TableColumnResizerPlugin = class extends import_obsidian.Plugin {
   setColumnWidth(table, columnIndex, width) {
     let layout = this.layouts.get(table);
     if (!layout) {
-      layout = prepareColumnLayout(table);
+      layout = prepareColumnLayout(table, this.settings.minColumnWidth);
       this.layouts.set(table, layout);
     }
-    updateColumnWidth(table, layout, columnIndex, width);
+    const bounds = this.currentTable === table ? this.dragBounds : columnResizeBounds(layout, columnIndex, this.settings.minColumnWidth, this.settings.maxColumnWidth);
+    updateColumnWidth(layout, columnIndex, Math.max(bounds.min, Math.min(width, bounds.max)));
   }
   async saveWidths(table, sourcePath) {
     var _a;
@@ -400,6 +539,8 @@ var TableColumnResizerPlugin = class extends import_obsidian.Plugin {
       this.finishResize();
       this.removeAllHandles();
       this.clearPendingRestores();
+      this.containerObservers.forEach((observer) => observer.disconnect());
+      this.containerObservers.clear();
     }
     await this.saveSettings();
   }

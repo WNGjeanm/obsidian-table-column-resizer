@@ -1,7 +1,7 @@
 {
 	"id": "table-column-resizer",
 	"name": "Table Column Resizer (Performance Fork)",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"minAppVersion": "0.15.0",
 	"description": "Performance fork of bubble-wu's Table Column Resizer. Resize reading-view columns with frame-coalesced updates.",
 	"author": "bubble (upstream); WNGjeanm (performance fork)",
